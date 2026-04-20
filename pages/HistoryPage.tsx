@@ -1,6 +1,8 @@
 
 import React, { useState } from 'react';
 import { UsageLog } from '../types';
+import * as XLSX from 'xlsx';
+import { Icons } from '../constants';
 
 interface Props {
   logs: UsageLog[];
@@ -26,6 +28,37 @@ export default function HistoryPage({ logs, onDelete }: Props) {
     return new Intl.DateTimeFormat('id-ID', { hour: '2-digit', minute: '2-digit' }).format(new Date(dateStr));
   };
 
+  const exportToExcel = () => {
+    const dataToExport = filteredLogs.map(log => ({
+      'Nama Driver': log.driverName,
+      'Unit Armada': log.carName,
+      'Departemen': log.department,
+      'Tujuan': log.destination,
+      'Keperluan': log.purpose,
+      'Waktu Berangkat': new Date(log.departureTime).toLocaleString('id-ID'),
+      'Rencana Kembali': log.plannedEndTime ? new Date(log.plannedEndTime).toLocaleString('id-ID') : '-',
+      'KM Awal': log.startOdometer,
+      'KM Akhir': log.endOdometer || '-',
+      'BBM/Baterai Akhir': log.endFuel || '-',
+      'Kondisi Akhir': log.endCondition || '-',
+      'Status': log.status.toUpperCase(),
+      'Catatan': log.notes || '-',
+      'URL Foto Parkir': log.parkingPhotoUrl || '-',
+      'URL Foto Odometer': log.speedometerPhotoUrl || '-'
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(dataToExport);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Log Aktivitas");
+    
+    // Auto-size columns
+    const max_width = dataToExport.reduce((w, r) => Math.max(w, ...Object.values(r).map(v => v ? v.toString().length : 0)), 10);
+    worksheet["!cols"] = Object.keys(dataToExport[0]).map(() => ({ wch: 20 }));
+
+    const fileName = `Log_Fleet_PLA_${new Date().toISOString().split('T')[0]}.xlsx`;
+    XLSX.writeFile(workbook, fileName);
+  };
+
   return (
     <div className="p-4 md:p-12 max-w-7xl mx-auto animate-in fade-in duration-700">
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-8 mb-12">
@@ -36,6 +69,13 @@ export default function HistoryPage({ logs, onDelete }: Props) {
           </div>
           <h1 className="text-3xl font-black text-slate-950 uppercase tracking-tight">Log Aktivitas Operasional</h1>
         </div>
+        <button 
+          onClick={exportToExcel}
+          className="flex items-center gap-3 px-8 py-5 bg-green-600 text-white rounded-[1.5rem] font-black text-[10px] uppercase tracking-[0.2em] shadow-xl hover:bg-green-700 active:scale-95 transition-all"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          Export CSV / Excel
+        </button>
       </div>
 
       <div className="relative mb-8">
@@ -54,7 +94,8 @@ export default function HistoryPage({ logs, onDelete }: Props) {
                 <th className="px-8 py-8 border-r border-slate-900">Tujuan</th>
                 <th className="px-8 py-8 border-r border-slate-900 text-center">Waktu</th>
                 <th className="px-8 py-8 border-r border-slate-900 text-center">Energi & KM</th>
-                <th className="px-8 py-8 text-center">Dokumen</th>
+                <th className="px-8 py-8 border-r border-slate-900 text-center">Foto Parkir</th>
+                <th className="px-8 py-8 border-r border-slate-900 text-center">Foto Speedo</th>
                 <th className="px-8 py-8 text-center border-r border-slate-900">Status</th>
                 <th className="px-8 py-8 text-center uppercase tracking-[0.2em] font-black text-[10px]">Aksi</th>
               </tr>
@@ -86,12 +127,31 @@ export default function HistoryPage({ logs, onDelete }: Props) {
                     </div>
                   </td>
                   <td className="px-8 py-8 text-center">
-                    {(log.returnPhoto || log.odometerPhotoUrl) ? (
-                      <button onClick={() => setSelectedPhoto((log.returnPhoto || log.odometerPhotoUrl)!)} className="p-3 bg-fuchsia-100 text-fuchsia-600 rounded-xl hover:bg-fuchsia-600 hover:text-white transition-all shadow-sm">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
-                      </button>
+                    {log.parkingPhotoUrl ? (
+                      <div onClick={() => setSelectedPhoto(log.parkingPhotoUrl!)} className="relative group cursor-pointer inline-block">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-slate-100 group-hover:border-blue-500 transition-all">
+                          <img src={log.parkingPhotoUrl} className="w-full h-full object-cover" alt="Parking" />
+                        </div>
+                        <div className="absolute inset-0 bg-blue-600/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                        </div>
+                      </div>
                     ) : (
-                      <span className="text-[9px] font-black text-slate-300 uppercase italic">No Photo</span>
+                      <span className="text-[9px] font-black text-slate-300 uppercase italic">-</span>
+                    )}
+                  </td>
+                  <td className="px-8 py-8 text-center">
+                    {log.speedometerPhotoUrl ? (
+                      <div onClick={() => setSelectedPhoto(log.speedometerPhotoUrl!)} className="relative group cursor-pointer inline-block">
+                        <div className="w-12 h-12 rounded-lg overflow-hidden border-2 border-slate-100 group-hover:border-amber-500 transition-all">
+                          <img src={log.speedometerPhotoUrl} className="w-full h-full object-cover" alt="Odometer" />
+                        </div>
+                        <div className="absolute inset-0 bg-amber-600/20 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-all">
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="4"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="text-[9px] font-black text-slate-300 uppercase italic">-</span>
                     )}
                   </td>
                   <td className="px-8 py-8 text-center">

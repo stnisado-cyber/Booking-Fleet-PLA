@@ -2,6 +2,7 @@
 import React, { useState, useRef } from 'react';
 import { UsageLog, FuelLevel, VehicleCondition } from '../types';
 import { Icons } from '../constants';
+import { supabase } from '../services/supabase';
 
 interface Props {
   logs: UsageLog[];
@@ -12,7 +13,10 @@ interface Props {
     arrivalTime: string, 
     parkingPhoto?: string, 
     odoPhoto?: string,
-    notes?: string 
+    notes?: string,
+    // Add URL fields to pass directly if already uploaded
+    parkingPhotoUrl?: string,
+    odoPhotoUrl?: string
   }) => void;
   onExtend: (id: string, newTime: string, reason: string) => void;
 }
@@ -24,6 +28,7 @@ export default function ReturnPage({ logs, onComplete, onExtend }: Props) {
   const [parkingPhoto, setParkingPhoto] = useState<string | null>(null);
   const [odoPhoto, setOdoPhoto] = useState<string | null>(null);
   const [odoError, setOdoError] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
   
   const parkingInputRef = useRef<HTMLInputElement>(null);
   const odoInputRef = useRef<HTMLInputElement>(null);
@@ -65,34 +70,81 @@ export default function ReturnPage({ logs, onComplete, onExtend }: Props) {
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedLogId || !endData.endOdo || odoError) return;
     
-    onComplete(selectedLogId, {
-      endOdo: parseInt(endData.endOdo),
-      endFuel: endData.endFuel,
-      endCondition: endData.endCondition,
-      arrivalTime: new Date(endData.arrivalTime).toISOString(),
-      parkingPhoto: parkingPhoto || undefined,
-      odoPhoto: odoPhoto || undefined,
-      notes: endData.notes
-    });
+    setIsUploading(true);
 
-    setSubmitted('returned');
-    setSelectedLogId(null);
-    setParkingPhoto(null);
-    setOdoPhoto(null);
-    setEndData({
-      endOdo: '',
-      endFuel: '1/2',
-      endCondition: 'BAIK',
-      notes: '',
-      arrivalTime: new Date().toISOString().slice(0, 16)
-    });
+    let finalParkingUrl = '';
+    let finalOdoUrl = '';
 
-    setTimeout(() => setSubmitted(null), 5000);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      // 1. Helper function to dataURL -> File -> Upload
+      const uploadFile = async (dataUrl: string, folder: string) => {
+        const arr = dataUrl.split(',');
+        const mime = arr[0].match(/:(.*?);/)?.[1];
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) u8arr[n] = bstr.charCodeAt(n);
+        const file = new File([u8arr], `foto_${Date.now()}.jpg`, { type: mime || 'image/jpeg' });
+        
+        const fileName = `foto_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg`;
+        const filePath = `${folder}/${fileName}`;
+
+        const { data, error } = await supabase.storage
+          .from('fleet-photos')
+          .upload(filePath, file);
+
+        if (error) throw error;
+        
+        const { data: { publicUrl } } = supabase.storage
+          .from('fleet-photos')
+          .getPublicUrl(filePath);
+          
+        return publicUrl;
+      };
+
+      // 2. Upload and get URLs
+      if (parkingPhoto) {
+        finalParkingUrl = await uploadFile(parkingPhoto, 'tempat-parkir');
+      }
+      if (odoPhoto) {
+        finalOdoUrl = await uploadFile(odoPhoto, 'odometer-pengembalian');
+      }
+
+      // 3. Call onComplete with URLs
+      onComplete(selectedLogId, {
+        endOdo: parseInt(endData.endOdo),
+        endFuel: endData.endFuel,
+        endCondition: endData.endCondition,
+        arrivalTime: new Date(endData.arrivalTime).toISOString(),
+        parkingPhotoUrl: finalParkingUrl,
+        odoPhotoUrl: finalOdoUrl,
+        notes: endData.notes
+      });
+
+      setSubmitted('returned');
+      setSelectedLogId(null);
+      setParkingPhoto(null);
+      setOdoPhoto(null);
+      setEndData({
+        endOdo: '',
+        endFuel: '1/2',
+        endCondition: 'BAIK',
+        notes: '',
+        arrivalTime: new Date().toISOString().slice(0, 16)
+      });
+
+      setTimeout(() => setSubmitted(null), 5000);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (error: any) {
+      console.error("Upload process failed:", error);
+      alert("Gagal mengunggah foto: " + error.message);
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const fuelOptions: { value: FuelLevel; label: string; batteryLabel: string }[] = [
@@ -240,17 +292,17 @@ export default function ReturnPage({ logs, onComplete, onExtend }: Props) {
                 </div>
               </div>
               <div className="space-y-6">
-                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Kondisi Fisik Unit</label>
+                <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block">Kondisi Fisik Unit (Pilih Salah Satu)</label>
                 <div className="flex gap-2 mb-4">
                   <button type="button" onClick={() => setEndData({...endData, endCondition: 'BAIK'})} className={`flex-1 py-4 rounded-xl font-black text-[10px] border-2 transition-all ${endData.endCondition === 'BAIK' ? 'bg-green-600 text-white border-green-700 shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}>NORMAL / BAIK</button>
                   <button type="button" onClick={() => setEndData({...endData, endCondition: 'PERLU PENGECEKAN'})} className={`flex-1 py-4 rounded-xl font-black text-[10px] border-2 transition-all ${endData.endCondition === 'PERLU PENGECEKAN' ? 'bg-amber-500 text-white border-amber-600 shadow-lg' : 'bg-white text-slate-400 border-slate-100 hover:border-slate-300'}`}>ADA CATATAN</button>
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Catatan Tambahan</label>
+                  <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest block">Catatan Tambahan (Bila Ada)</label>
                   <textarea 
                     value={endData.notes}
                     onChange={e => setEndData({...endData, notes: e.target.value})}
-                    placeholder="Contoh: Unit perlu dicuci, ada baret halus di pintu kiri, dll..."
+                    placeholder="Tulis catatan detail (Contoh: Unit perlu dicuci, ada baret halus di pintu kiri, ada penyok, dll...)"
                     className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-50 rounded-2xl outline-none focus:border-fuchsia-500 font-bold text-xs min-h-[100px] resize-none"
                   />
                 </div>
@@ -261,11 +313,20 @@ export default function ReturnPage({ logs, onComplete, onExtend }: Props) {
           <div className="p-10 bg-slate-50 border-t border-slate-100">
              <button 
                 type="submit" 
-                disabled={!!odoError || !endData.endOdo} 
-                className={`w-full py-8 font-black uppercase text-sm tracking-[0.3em] rounded-[2rem] transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-4 ${odoError || !endData.endOdo ? 'bg-slate-300 text-slate-400 cursor-not-allowed shadow-none' : 'bg-slate-950 text-white hover:bg-fuchsia-600'}`}
+                disabled={!!odoError || !endData.endOdo || isUploading} 
+                className={`w-full py-8 font-black uppercase text-sm tracking-[0.3em] rounded-[2rem] transition-all shadow-2xl active:scale-95 flex items-center justify-center gap-4 ${odoError || !endData.endOdo || isUploading ? 'bg-slate-300 text-slate-400 cursor-not-allowed shadow-none' : 'bg-slate-950 text-white hover:bg-fuchsia-600'}`}
              >
-                <Icons.Return />
-                Kirim Data Kembali
+                {isUploading ? (
+                  <>
+                    <div className="w-5 h-5 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                    Mengunggah Data...
+                  </>
+                ) : (
+                  <>
+                    <Icons.Return />
+                    Kirim Data Kembali
+                  </>
+                )}
              </button>
           </div>
         </form>

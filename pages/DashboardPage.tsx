@@ -1,6 +1,7 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Car, UsageLog, FuelLevel, VehicleCondition } from '../types';
+import { supabase } from '../services/supabase';
 
 interface Props {
   cars: Car[];
@@ -12,22 +13,31 @@ interface Props {
     arrivalTime: string,
     notes?: string,
     parkingPhoto?: string,
-    odoPhoto?: string
+    odoPhoto?: string,
+    parkingPhotoUrl?: string,
+    odoPhotoUrl?: string
   }) => void;
   onApprove: (id: string) => void;
   onReject: (id: string) => void;
   onRefresh: () => void;
   onToggleMaintenance: (unitId: string) => void;
+  onResetUnit: (unitId: string) => void;
   onTestSupabase: () => void;
   onResetAll?: () => void;
   lastSync?: string;
 }
 
-export default function DashboardPage({ cars, logs, onComplete, onApprove, onReject, onRefresh, onToggleMaintenance, onTestSupabase, onResetAll, lastSync }: Props) {
+export default function DashboardPage({ cars, logs, onComplete, onApprove, onReject, onRefresh, onToggleMaintenance, onResetUnit, onTestSupabase, onResetAll, lastSync }: Props) {
   const pendingLogs = logs.filter(l => l.status === 'pending');
   const activeLogs = logs.filter(l => l.status === 'active' || l.status === 'on-duty');
   const [completeDialog, setCompleteDialog] = useState<string | null>(null);
   const [selectedPhoto, setSelectedPhoto] = useState<string | null>(null);
+  const [parkingPhoto, setParkingPhoto] = useState<string | null>(null);
+  const [odoPhoto, setOdoPhoto] = useState<string | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  
+  const parkingInputRef = useRef<HTMLInputElement>(null);
+  const odoInputRef = useRef<HTMLInputElement>(null);
   
   const [confirmReset, setConfirmReset] = useState(false);
   
@@ -46,6 +56,84 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
     maintenance: cars.filter(c => c.status === 'maintenance').length,
     pending: pendingLogs.length
   };
+
+  const selectedLog = logs.find(l => l.id === completeDialog);
+  const isEV = selectedLog?.carName.toUpperCase().includes('BYD');
+
+  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>, type: 'parking' | 'odo') => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        if (type === 'parking') setParkingPhoto(reader.result as string);
+        else setOdoPhoto(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const handleCompleteSubmit = async () => {
+    if (!completeDialog || !endData.endOdo) return;
+    
+    setIsUploading(true);
+    let finalParkingUrl = '';
+    let finalOdoUrl = '';
+
+    try {
+      const uploadFile = async (dataUrl: string, folder: string) => {
+        const arr = dataUrl.split(',');
+        const mime = arr[0].match(/:(.*?);/)?.[1];
+        const bstr = atob(arr[1]);
+        let n = bstr.length;
+        const u8arr = new Uint8Array(n);
+        while (n--) u8arr[n] = bstr.charCodeAt(n);
+        const file = new File([u8arr], `foto_${Date.now()}.jpg`, { type: mime || 'image/jpeg' });
+        const filePath = `${folder}/foto_${Date.now()}_${Math.floor(Math.random() * 1000)}.jpg`;
+
+        const { error } = await supabase.storage.from('fleet-photos').upload(filePath, file);
+        if (error) throw error;
+        
+        const { data: { publicUrl } } = supabase.storage.from('fleet-photos').getPublicUrl(filePath);
+        return publicUrl;
+      };
+
+      if (parkingPhoto) finalParkingUrl = await uploadFile(parkingPhoto, 'tempat-parkir');
+      if (odoPhoto) finalOdoUrl = await uploadFile(odoPhoto, 'odometer-pengembalian');
+
+      onComplete(completeDialog, {
+        endOdo: parseInt(endData.endOdo),
+        endFuel: endData.endFuel,
+        endCondition: endData.endCondition,
+        arrivalTime: new Date().toISOString(),
+        parkingPhotoUrl: finalParkingUrl,
+        odoPhotoUrl: finalOdoUrl,
+        notes: endData.notes
+      });
+
+      setCompleteDialog(null);
+      setParkingPhoto(null);
+      setOdoPhoto(null);
+      setEndData({
+        endOdo: '',
+        endFuel: '1/2',
+        endCondition: 'BAIK',
+        notes: '',
+        arrivalTime: new Date().toISOString().slice(0, 16)
+      });
+    } catch (error: any) {
+      alert("Gagal upload: " + error.message);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const fuelOptions: { value: FuelLevel; label: string; batteryLabel: string }[] = [
+    { value: 'E', label: 'E', batteryLabel: '<20%' },
+    { value: '1/4', label: '1/4', batteryLabel: '40%' },
+    { value: '1/2', label: '1/2', batteryLabel: '60%' },
+    { value: '3/4', label: '3/4', batteryLabel: '80%' },
+    { value: 'F', label: 'F', batteryLabel: '100%' },
+  ];
 
   return (
     <div className="p-4 md:p-12 space-y-12 max-w-7xl mx-auto animate-in fade-in duration-700">
@@ -116,17 +204,6 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
                         <p className="text-[10px] font-black text-fuchsia-600">{new Date(log.plannedEndTime).toLocaleDateString('id-ID', {day:'numeric', month:'short'})} • {new Date(log.plannedEndTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</p>
                       </div>
                     </div>
-                    {log.odometerPhotoUrl && (
-                      <div className="pt-3 border-t border-slate-200">
-                        <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-2">Foto Odometer Awal</p>
-                        <button 
-                          onClick={() => setSelectedPhoto(log.odometerPhotoUrl!)}
-                          className="w-full h-24 rounded-xl overflow-hidden border-2 border-slate-100 hover:border-fuchsia-500 transition-all group"
-                        >
-                          <img src={log.odometerPhotoUrl} className="w-full h-full object-cover group-hover:scale-110 transition-transform" alt="Odometer" />
-                        </button>
-                      </div>
-                    )}
                   </div>
 
                   <div className="flex gap-3">
@@ -188,9 +265,17 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
                     }`}>
                       {car.status}
                     </span>
-                    {(car.status === 'available' || car.status === 'maintenance') && (
+                    <div className="flex items-center gap-2">
                       <button 
-                        onClick={() => onToggleMaintenance(car.id)}
+                        onClick={() => onResetUnit(car.id)}
+                        className="p-2 bg-slate-100 text-slate-400 hover:bg-slate-950 hover:text-white rounded-lg transition-all"
+                        title="Reset ke Tersedia"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L3 16"/><path d="M3 21v-5h5"/></svg>
+                      </button>
+                      {(car.status === 'available' || car.status === 'maintenance') && (
+                        <button 
+                          onClick={() => onToggleMaintenance(car.id)}
                         className={`p-2 rounded-lg transition-all ${
                           car.status === 'maintenance' ? 'bg-green-500 text-white' : 'bg-slate-200 text-slate-500 hover:bg-slate-800 hover:text-white'
                         }`}
@@ -203,6 +288,7 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
                         )}
                       </button>
                     )}
+                    </div>
                   </div>
                </div>
              ))}
@@ -211,28 +297,98 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
       </div>
 
       {completeDialog && (
-        <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-xl flex items-center justify-center p-6 z-[100]">
-          <div className="bg-white rounded-[3rem] p-10 w-full max-w-md shadow-2xl">
-            <h3 className="text-2xl font-black text-slate-950 uppercase tracking-tight mb-8 text-center">Input KM Akhir</h3>
-            <input 
-              type="number" 
-              value={endData.endOdo}
-              onChange={e => setEndData({ ...endData, endOdo: e.target.value })}
-              className="w-full px-6 py-6 border-4 border-slate-50 rounded-2xl outline-none font-mono font-black text-3xl text-center mb-4"
-              placeholder="KM Akhir"
-            />
-            <textarea 
-              value={endData.notes}
-              onChange={e => setEndData({ ...endData, notes: e.target.value })}
-              className="w-full px-6 py-4 border-2 border-slate-50 rounded-2xl outline-none font-bold text-xs mb-8 min-h-[80px] resize-none"
-              placeholder="Catatan Kondisi (Opsional)"
-            />
-            <div className="flex flex-col gap-4">
+        <div className="fixed inset-0 flex items-center justify-center p-6 z-[100] overflow-y-auto pointer-events-none">
+          <div className="bg-white rounded-[2rem] p-6 w-full max-w-md shadow-[0_20px_70px_-10px_rgba(0,0,0,0.3)] border border-slate-100 pointer-events-auto animate-in zoom-in-95 duration-300">
+            <h3 className="text-lg font-black text-slate-950 uppercase tracking-tight mb-4 text-center">Check-In Unit</h3>
+            
+            <div className="grid grid-cols-2 gap-3 mb-4">
+               <div className="space-y-1">
+                 <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block text-center">Foto Parkir</label>
+                 <div onClick={() => parkingInputRef.current?.click()} className="aspect-video bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden cursor-pointer hover:border-fuchsia-500 transition-all">
+                    {parkingPhoto ? <img src={parkingPhoto} className="w-full h-full object-cover" /> : <div className="text-slate-300"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></div>}
+                 </div>
+                 <input type="file" ref={parkingInputRef} hidden accept="image/*" onChange={e => handlePhotoUpload(e, 'parking')} />
+               </div>
+               <div className="space-y-1">
+                 <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block text-center">Foto Speedo</label>
+                 <div onClick={() => odoInputRef.current?.click()} className="aspect-video bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 flex items-center justify-center overflow-hidden cursor-pointer hover:border-fuchsia-500 transition-all">
+                    {odoPhoto ? <img src={odoPhoto} className="w-full h-full object-cover" /> : <div className="text-slate-300"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></div>}
+                 </div>
+                 <input type="file" ref={odoInputRef} hidden accept="image/*" onChange={e => handlePhotoUpload(e, 'odo')} />
+               </div>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1 text-center">KM Akhir (Mulai: {selectedLog?.startOdometer})</label>
+                <input 
+                  type="number" 
+                  value={endData.endOdo}
+                  onChange={e => setEndData({ ...endData, endOdo: e.target.value })}
+                  className="w-full px-3 py-3 border-2 border-slate-100 rounded-xl outline-none font-mono font-black text-xl text-center focus:border-fuchsia-500 transition-all"
+                  placeholder="000000"
+                />
+              </div>
+
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5">{isEV ? 'Baterai (%)' : 'Level BBM'}</label>
+                <div className="grid grid-cols-5 gap-1">
+                  {fuelOptions.map(opt => (
+                    <button 
+                      key={opt.value} 
+                      type="button" 
+                      onClick={() => setEndData({...endData, endFuel: opt.value})} 
+                      className={`py-2 rounded-lg font-black text-[8px] transition-all border ${endData.endFuel === opt.value ? 'bg-slate-950 text-white border-slate-950 shadow-sm' : 'bg-white text-slate-400 border-slate-50 hover:border-slate-200'}`}
+                    >
+                      {isEV ? opt.batteryLabel : opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[8px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 text-center">Kondisi Unit (Pilih Salah Satu)</label>
+                <div className="flex gap-2">
+                  <button 
+                    type="button" 
+                    onClick={() => setEndData({...endData, endCondition: 'BAIK'})} 
+                    className={`flex-1 py-2.5 rounded-lg font-black text-[8px] border transition-all ${endData.endCondition === 'BAIK' ? 'bg-green-600 text-white border-green-700' : 'bg-white text-slate-400 border-slate-50 hover:border-slate-200'}`}
+                  >
+                    NORMAL
+                  </button>
+                  <button 
+                    type="button" 
+                    onClick={() => setEndData({...endData, endCondition: 'PERLU PENGECEKAN'})} 
+                    className={`flex-1 py-2.5 rounded-lg font-black text-[8px] border transition-all ${endData.endCondition === 'PERLU PENGECEKAN' ? 'bg-amber-500 text-white border-amber-600' : 'bg-white text-slate-400 border-slate-50 hover:border-slate-200'}`}
+                  >
+                    ADA CATATAN
+                  </button>
+                </div>
+              </div>
+
+              <textarea 
+                value={endData.notes}
+                onChange={e => setEndData({ ...endData, notes: e.target.value })}
+                className="w-full px-4 py-2 bg-slate-50 border border-slate-100 rounded-xl outline-none font-bold text-[9px] min-h-[50px] resize-none focus:border-fuchsia-500"
+                placeholder="Tulis catatan kondisi unit (Contoh: Perlu dicuci, ada baret halus, ada penyok, lampu mati, dll...)"
+              />
+            </div>
+
+            <div className="flex flex-col gap-2">
+              <button 
+                disabled={isUploading || !endData.endOdo}
+                onClick={handleCompleteSubmit} 
+                className="py-4 bg-slate-950 text-white font-black uppercase text-[9px] tracking-widest rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 active:scale-95 transition-all shadow-md"
+              >
+                {isUploading ? (
+                  <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                ) : 'Simpan & Selesai'}
+              </button>
               <button onClick={() => {
-                onComplete(completeDialog, { ...endData, endOdo: parseInt(endData.endOdo), arrivalTime: new Date().toISOString() });
                 setCompleteDialog(null);
-              }} className="py-6 bg-slate-950 text-white font-black uppercase text-xs rounded-2xl">Confirm & Clear Status</button>
-              <button onClick={() => setCompleteDialog(null)} className="py-2 text-slate-400 font-bold uppercase text-[10px]">Cancel</button>
+                setParkingPhoto(null);
+                setOdoPhoto(null);
+              }} className="py-2 text-slate-400 font-bold uppercase text-[8px] tracking-widest">Batal</button>
             </div>
           </div>
         </div>

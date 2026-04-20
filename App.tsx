@@ -7,7 +7,7 @@ import FormPage from './pages/FormPage';
 import DashboardPage from './pages/DashboardPage';
 import HistoryPage from './pages/HistoryPage';
 import ReturnPage from './pages/ReturnPage';
-import { supabase } from './services/supabase';
+import { supabase, checkSupabaseConfig } from './services/supabase';
 
 export default function App() {
   const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem('admin_auth') === 'true');
@@ -46,9 +46,12 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
+  const [configError, setConfigError] = useState<string | null>(null);
+
   // Fungsi Tarik Data Cloud dari Supabase (Multi-Table)
   const fetchCloudData = async () => {
     try {
+      checkSupabaseConfig();
       // TULIS ULANG: Menggunakan fleet_units dengan kolom spesifik: id, nama_unit, plat_nomor, status
       const { data: unitsData, error: unitsError } = await supabase
         .from('fleet_units')
@@ -62,6 +65,14 @@ export default function App() {
         .order('created_at', { ascending: false });
 
       if (bookingsError) throw bookingsError;
+
+      const { data: returnsData, error: returnsError } = await supabase
+        .from('fleet_returns')
+        .select('*');
+
+      if (returnsError) {
+        console.warn("Returns fetch error (non-blocking):", returnsError);
+      }
 
       // Transform DB columns to App state
       const mappedCars: Car[] = (unitsData || []).map(u => {
@@ -80,8 +91,11 @@ export default function App() {
 
       const mappedLogs: UsageLog[] = (bookingsData || []).map(b => {
         const unit = mappedCars.find(c => c.id === b.unit_id?.toString());
+        const returnDetail = (returnsData || []).find(r => r.booking_id?.toString() === b.id.toString());
+        
         const approval = b.status_approval?.toLowerCase() || 'pending';
         const isActive = approval === 'active' || approval === 'on-duty' || approval === 'on duty' || approval === 'on trip';
+        
         return {
           id: b.id.toString(),
           unitId: b.unit_id?.toString() || '',
@@ -99,7 +113,14 @@ export default function App() {
           destination: b.tujuan || b.destination || b.keperluan_tujuan || '',
           status: isActive ? 'active' : (approval as any),
           requestDate: b.created_at,
-          odometerPhotoUrl: b.foto_odometer || ''
+          // Add return details - prioritaskan kolom baru
+          endOdometer: b.km_akhir || returnDetail?.odometer_akhir || b.odometer_akhir,
+          endFuel: b.bbm_akhir || returnDetail?.bbm_akhir || b.bbm_akhir,
+          endCondition: b.kondisi_akhir || returnDetail?.kondisi_akhir,
+          arrivalTime: returnDetail?.waktu_kembali,
+          notes: b.catatan_kondisi || returnDetail?.catatan,
+          parkingPhotoUrl: b.foto_parkir || returnDetail?.foto_parkir,
+          speedometerPhotoUrl: b.foto_speedo || returnDetail?.foto_speedo || returnDetail?.foto_odo || returnDetail?.foto_speedometer
         };
       });
 
@@ -121,11 +142,16 @@ export default function App() {
         localStorage.setItem(`cars_${networkId}`, JSON.stringify(myData.cars));
       }
       setNetworkError(false);
+      setConfigError(null);
       setLastSync(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
       setIsReady(true);
     } catch (e: any) {
       console.warn("Sync failed:", e.message);
-      setNetworkError(true);
+      if (e.message.includes("KONFIGURASI_MISSING")) {
+        setConfigError(e.message.replace("KONFIGURASI_MISSING: ", ""));
+      } else {
+        setNetworkError(true);
+      }
     } finally {
       if (!isSilent) setIsSyncing(false);
     }
@@ -157,33 +183,7 @@ export default function App() {
     setIsSyncing(true);
     console.log("Memulai pengiriman data ke fleet_bookings...", log);
     try {
-      let photoUrl = '';
-
-      // 1. Upload Foto ke Storage jika ada
-      if (log.odometerPhotoFile) {
-        const file = log.odometerPhotoFile;
-        const fileExt = file.name.split('.').pop();
-        const fileName = `${Math.random()}.${fileExt}`;
-        const filePath = `odometer/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from('fleet-photos')
-          .upload(filePath, file);
-
-        if (uploadError) {
-          console.error("Gagal upload foto:", uploadError);
-          throw new Error("Gagal mengunggah foto odometer.");
-        }
-
-        const { data: { publicUrl } } = supabase.storage
-          .from('fleet-photos')
-          .getPublicUrl(filePath);
-        
-        photoUrl = publicUrl;
-        console.log("Foto berhasil diupload:", photoUrl);
-      }
-
-      // 2. Insert ke fleet_bookings dengan kolom asli database
+      // 1. Insert ke fleet_bookings dengan kolom asli database
       const payload: any = { 
         nama_user: log.driverName, 
         departemen: log.department, 
@@ -192,8 +192,7 @@ export default function App() {
         unit_id: parseInt(log.unitId), 
         rencana_pakai: log.plannedStartTime,
         sampai_kapan: log.plannedEndTime,
-        status_approval: 'pending',
-        foto_odometer: photoUrl
+        status_approval: 'pending'
       };
 
       console.log("Payload yang dikirim ke Supabase:", payload);
@@ -260,14 +259,22 @@ export default function App() {
       const log = logs.find(l => l.id === id);
       if (!log) return;
 
-      let parkingUrl = '';
-      let speedometerUrl = '';
+      // 1. UPDATE STATUS TERLEBIH DAHULU (Prioritas Utama)
+      // Ini memastikan mobil langsung hijau dan trip hilang dari daftar pengembalian
+      await updateBookingStatus(id, 'completed');
+      await updateUnitStatus(log.unitId, 'available');
+      
+      // 2. Sinkron state lokal agar UI langsung update tanpa nunggu background process
+      await syncData(true);
 
-      // 1. Upload Foto Parkir jika ada
-      if (endData.parkingPhoto) {
+      let parkingUrl = endData.parkingPhotoUrl || '';
+      let speedometerUrl = endData.odoPhotoUrl || '';
+
+      // 3. Proses Foto di latar belakang (hanya jika belum di-upload oleh page)
+      if (!parkingUrl && endData.parkingPhoto) {
         try {
           const file = dataURLtoFile(endData.parkingPhoto, `parking_${id}.jpg`);
-          const filePath = `returns/parking_${Date.now()}_${id}.jpg`;
+          const filePath = `tempat-parkir/foto_${Date.now()}.jpg`;
           const { error: uploadError } = await supabase.storage.from('fleet-photos').upload(filePath, file);
           if (!uploadError) {
             const { data: { publicUrl } } = supabase.storage.from('fleet-photos').getPublicUrl(filePath);
@@ -276,11 +283,10 @@ export default function App() {
         } catch (e) { console.error("Upload parking failed", e); }
       }
 
-      // 2. Upload Foto Speedometer jika ada
-      if (endData.odoPhoto) {
+      if (!speedometerUrl && endData.odoPhoto) {
         try {
           const file = dataURLtoFile(endData.odoPhoto, `speedo_${id}.jpg`);
-          const filePath = `returns/speedo_${Date.now()}_${id}.jpg`;
+          const filePath = `odometer-pengembalian/foto_${Date.now()}.jpg`;
           const { error: uploadError } = await supabase.storage.from('fleet-photos').upload(filePath, file);
           if (!uploadError) {
             const { data: { publicUrl } } = supabase.storage.from('fleet-photos').getPublicUrl(filePath);
@@ -289,49 +295,47 @@ export default function App() {
         } catch (e) { console.error("Upload speedo failed", e); }
       }
 
-      // 3. Update status booking
-      await updateBookingStatus(id, 'completed');
-
-      // 4. Insert ke fleet_returns dengan percobaan bertahap (resilient insert)
-      const fullPayload: any = {
-        booking_id: id,
-        odometer_akhir: endData.endOdometer,
-        bbm_akhir: endData.endFuel,
-        kondisi_akhir: endData.endCondition,
-        waktu_kembali: endData.arrivalTime,
-        catatan: `${endData.notes || ''} (BBM: ${endData.endFuel}, Kondisi: ${endData.endCondition})`,
+      // 4. Update tabel database (Prioritas: Transaction Row & Returns Table)
+      // Gunakan nama kolom sesuai permintaan: km_akhir, bbm_akhir, foto_parkir, foto_speedo, catatan_kondisi
+      // Gunakan 'as any' untuk menghindari error schema cache / TypeScript
+      const updatePayload: any = {
         foto_parkir: parkingUrl,
-        foto_speedometer: speedometerUrl
+        foto_speedo: speedometerUrl,
+        km_akhir: endData.endOdo,
+        bbm_akhir: endData.endFuel,
+        catatan_kondisi: `${endData.notes || ''} (Kondisi: ${endData.endCondition})`,
+        status_approval: 'completed'
       };
 
-      let { error: returnErr } = await supabase.from('fleet_returns').insert([fullPayload]);
-      
-      // Jika gagal karena kolom tidak ditemukan, coba lagi dengan payload minimal
-      if (returnErr && returnErr.code === 'PGRST204') {
-        console.warn("Retrying insert with minimal payload due to missing columns:", returnErr.message);
-        const minimalPayload = {
-          booking_id: id,
-          odometer_akhir: endData.endOdometer,
-          waktu_kembali: endData.arrivalTime,
-          catatan: `${endData.notes || ''} [BBM: ${endData.endFuel}, Kondisi: ${endData.endCondition}, Foto: ${parkingUrl}, ${speedometerUrl}]`
-        };
-        const { error: retryErr } = await supabase.from('fleet_returns').insert([minimalPayload]);
-        returnErr = retryErr;
-      }
+      const { error: bookingUpdateErr } = await (supabase.from('fleet_bookings') as any)
+        .update(updatePayload)
+        .eq('id', id);
+
+      if (bookingUpdateErr) console.warn("Update fleet_bookings details failed:", bookingUpdateErr);
+
+      const fullPayload: any = {
+        booking_id: id,
+        odometer_akhir: endData.endOdo,
+        bbm_akhir: endData.endFuel,
+        kondisi_akhir: endData.endCondition,
+        waktu_kembali: endData.arrivalTime || new Date().toISOString(),
+        catatan: `${endData.notes || ''} (BBM: ${endData.endFuel}, Kondisi: ${endData.endCondition})`,
+        foto_parkir: parkingUrl,
+        foto_odo: speedometerUrl,
+        foto_speedo: speedometerUrl // Also set this if the column exists in returns table
+      };
+
+      const { error: returnErr } = await supabase.from('fleet_returns').insert([fullPayload]);
       
       if (returnErr) {
-        console.error("Error insert fleet_returns:", returnErr);
-        throw returnErr;
+        console.warn("Laporan detail gagal disimpan, tapi status unit tetap di-reset:", returnErr.message);
+        // Kita tidak throw error di sini agar alert sukses tetap muncul karena unit sudah tersedia
       }
 
-      // 5. Update status unit
-      await updateUnitStatus(log.unitId, 'available');
-
-      await syncData();
-      alert("✅ Pengembalian unit berhasil diproses.");
+      alert("✅ Unit berhasil dikembalikan & armada kini TERSEDIA.");
     } catch (e: any) {
       console.error("Error Total handleComplete:", e);
-      alert("Gagal memproses pengembalian unit: " + (e.message || "Error Database"));
+      alert("⚠️ Terjadi kendala teknis, gunakan tombol RESET di Dashboard jika unit masih merah.");
     } finally {
       setIsSyncing(false);
     }
@@ -384,6 +388,19 @@ export default function App() {
       await syncData();
     } catch (e) {
       console.error(e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const handleResetUnit = async (unitId: string) => {
+    setIsSyncing(true);
+    try {
+      await updateUnitStatus(unitId, 'available');
+      await syncData();
+      alert("✅ Status unit berhasil di-reset menjadi TERSEDIA.");
+    } catch (e: any) {
+      alert("Gagal reset unit: " + e.message);
     } finally {
       setIsSyncing(false);
     }
@@ -476,6 +493,14 @@ export default function App() {
         />
         
         <main className="flex-1 w-full pb-24 md:pb-0 overflow-x-hidden relative">
+          {configError && (
+             <div className="bg-amber-500 text-slate-950 p-6 text-center font-black uppercase text-xs tracking-widest shadow-xl animate-in slide-in-from-top duration-500 relative z-[70]">
+               <div className="max-w-2xl mx-auto flex flex-col md:flex-row items-center justify-center gap-4">
+                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                 <span> {configError} </span>
+               </div>
+             </div>
+          )}
           {/* Mobile Header Bar */}
           <div className={`md:hidden p-3 flex justify-between items-center text-[9px] font-black uppercase tracking-widest border-b sticky top-0 z-[60] shadow-sm ${networkError ? 'bg-amber-500 text-slate-950' : 'bg-slate-950 text-white'}`}>
              <div className="flex items-center gap-2">
@@ -490,7 +515,7 @@ export default function App() {
             <Route path="/return" element={<ReturnPage logs={logs} onComplete={handleComplete} onExtend={() => {}} />} />
             <Route 
               path="/dashboard" 
-              element={isAdmin ? <DashboardPage cars={cars} logs={logs} onComplete={handleComplete} onApprove={handleApprove} onReject={handleReject} onRefresh={() => syncData()} onToggleMaintenance={handleToggleMaintenance} onTestSupabase={handleTestSupabase} onResetAll={handleEmergencyReset} lastSync={lastSync} /> : <AdminGuard onAuth={(pin) => { if(pin === '1234') { setIsAdmin(true); sessionStorage.setItem('admin_auth', 'true'); return true; } return false; }} />} 
+              element={isAdmin ? <DashboardPage cars={cars} logs={logs} onComplete={handleComplete} onApprove={handleApprove} onReject={handleReject} onRefresh={() => syncData()} onToggleMaintenance={handleToggleMaintenance} onResetUnit={handleResetUnit} onTestSupabase={handleTestSupabase} onResetAll={handleEmergencyReset} lastSync={lastSync} /> : <AdminGuard onAuth={(pin) => { if(pin === '1234') { setIsAdmin(true); sessionStorage.setItem('admin_auth', 'true'); return true; } return false; }} />} 
             />
             <Route 
               path="/history" 

@@ -31,11 +31,8 @@ export interface UsageLog {
   notes?: string;
   status: 'pending' | 'active' | 'completed' | 'rejected' | 'on-duty';
   requestDate: string;
-  returnPhoto?: string;
   parkingPhotoUrl?: string;
   speedometerPhotoUrl?: string;
-  odometerPhotoUrl?: string;
-  odometerPhotoFile?: File;
 }
 
 export interface AppState {
