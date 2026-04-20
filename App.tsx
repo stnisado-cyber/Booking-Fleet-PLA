@@ -7,7 +7,7 @@ import FormPage from './pages/FormPage';
 import DashboardPage from './pages/DashboardPage';
 import HistoryPage from './pages/HistoryPage';
 import ReturnPage from './pages/ReturnPage';
-import { supabase, checkSupabaseConfig } from './services/supabase';
+import { supabase } from './services/supabase';
 
 export default function App() {
   const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem('admin_auth') === 'true');
@@ -46,12 +46,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [configError, setConfigError] = useState<string | null>(null);
-
   // Fungsi Tarik Data Cloud dari Supabase (Multi-Table)
   const fetchCloudData = async () => {
     try {
-      checkSupabaseConfig();
       // TULIS ULANG: Menggunakan fleet_units dengan kolom spesifik: id, nama_unit, plat_nomor, status
       const { data: unitsData, error: unitsError } = await supabase
         .from('fleet_units')
@@ -133,16 +130,11 @@ export default function App() {
         localStorage.setItem(`cars_${networkId}`, JSON.stringify(myData.cars));
       }
       setNetworkError(false);
-      setConfigError(null);
       setLastSync(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
       setIsReady(true);
     } catch (e: any) {
       console.warn("Sync failed:", e.message);
-      if (e.message.includes("KONFIGURASI_MISSING")) {
-        setConfigError(e.message.replace("KONFIGURASI_MISSING: ", ""));
-      } else {
-        setNetworkError(true);
-      }
+      setNetworkError(true);
     } finally {
       if (!isSilent) setIsSyncing(false);
     }
@@ -450,25 +442,6 @@ export default function App() {
     }
   };
 
-  if (configError && !isReady) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-10 text-white text-center font-sans">
-        <div className="max-w-md space-y-6">
-          <div className="w-20 h-20 bg-amber-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-amber-500/20">
-            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-          </div>
-          <h1 className="text-2xl font-black uppercase tracking-tight">Konfigurasi Dibutuhkan</h1>
-          <p className="text-slate-400 text-sm font-bold uppercase tracking-widest leading-loose">
-            {configError}
-          </p>
-          <button onClick={() => window.location.reload()} className="px-10 py-4 bg-fuchsia-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-700 transition-all">
-            Coba Segarkan Halaman
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   if (networkError && !isReady && logs.length === 0) {
     return (
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-10 text-white text-center font-sans">
@@ -503,14 +476,6 @@ export default function App() {
         />
         
         <main className="flex-1 w-full pb-24 md:pb-0 overflow-x-hidden relative">
-          {configError && (
-             <div className="bg-amber-500 text-slate-950 p-6 text-center font-black uppercase text-xs tracking-widest shadow-xl animate-in slide-in-from-top duration-500 relative z-[70]">
-               <div className="max-w-2xl mx-auto flex flex-col md:flex-row items-center justify-center gap-4">
-                 <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                 <span> {configError} </span>
-               </div>
-             </div>
-          )}
           {/* Mobile Header Bar */}
           <div className={`md:hidden p-3 flex justify-between items-center text-[9px] font-black uppercase tracking-widest border-b sticky top-0 z-[60] shadow-sm ${networkError ? 'bg-amber-500 text-slate-950' : 'bg-slate-950 text-white'}`}>
              <div className="flex items-center gap-2">
