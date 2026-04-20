@@ -442,25 +442,6 @@ export default function App() {
     }
   };
 
-  if (networkError && !isReady && logs.length === 0) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-10 text-white text-center font-sans">
-        <div className="max-w-md space-y-6">
-          <div className="w-20 h-20 bg-red-600 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-red-600/20">
-            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
-          </div>
-          <h1 className="text-2xl font-black uppercase tracking-tight">Koneksi Terputus</h1>
-          <p className="text-slate-400 text-sm font-bold uppercase tracking-widest leading-loose">
-            Gagal menghubungkan ke database armada. Mohon periksa koneksi internet Anda atau pastikan URL Supabase sudah benar.
-          </p>
-          <button onClick={() => syncData()} className="px-10 py-4 bg-fuchsia-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-700 transition-all">
-            Hubungkan Kembali
-          </button>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <HashRouter>
       <div className="flex flex-col md:flex-row min-h-screen w-full bg-[#f8fafc] text-slate-900">
