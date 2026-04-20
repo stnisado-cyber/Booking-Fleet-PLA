@@ -197,11 +197,11 @@ export default function DashboardPage({ cars, logs, onComplete, onApprove, onRej
                     <div className="pt-3 border-t border-slate-200 grid grid-cols-2 gap-4">
                       <div>
                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Rencana Pakai</p>
-                        <p className="text-[10px] font-black text-fuchsia-600">{new Date(log.plannedStartTime).toLocaleDateString('id-ID', {day:'numeric', month:'short'})} • {new Date(log.plannedStartTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</p>
+                        <p className="text-[10px] font-black text-fuchsia-600">{log.plannedStartTime ? new Date(log.plannedStartTime).toLocaleDateString('id-ID', {day:'numeric', month:'short'}) : '-'} • {log.plannedStartTime ? new Date(log.plannedStartTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'}) : '-'}</p>
                       </div>
                       <div>
                         <p className="text-[8px] font-black text-slate-400 uppercase tracking-widest mb-1">Sampai</p>
-                        <p className="text-[10px] font-black text-fuchsia-600">{new Date(log.plannedEndTime).toLocaleDateString('id-ID', {day:'numeric', month:'short'})} • {new Date(log.plannedEndTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'})}</p>
+                        <p className="text-[10px] font-black text-fuchsia-600">{log.plannedEndTime ? new Date(log.plannedEndTime).toLocaleDateString('id-ID', {day:'numeric', month:'short'}) : '-'} • {log.plannedEndTime ? new Date(log.plannedEndTime).toLocaleTimeString('id-ID', {hour:'2-digit', minute:'2-digit'}) : '-'}</p>
                       </div>
                     </div>
                   </div>

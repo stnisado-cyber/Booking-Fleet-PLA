@@ -66,14 +66,6 @@ export default function App() {
 
       if (bookingsError) throw bookingsError;
 
-      const { data: returnsData, error: returnsError } = await supabase
-        .from('fleet_returns')
-        .select('*');
-
-      if (returnsError) {
-        console.warn("Returns fetch error (non-blocking):", returnsError);
-      }
-
       // Transform DB columns to App state
       const mappedCars: Car[] = (unitsData || []).map(u => {
         let status = u.status?.toLowerCase() || 'available';
@@ -83,15 +75,14 @@ export default function App() {
         }
         return {
           id: u.id.toString(),
-          name: u.nama_unit,
-          plateNumber: u.plat_nomor,
+          name: u.nama_unit || 'Unit Tanpa Nama',
+          plateNumber: u.plat_nomor || '-',
           status: status as any
         };
       });
 
       const mappedLogs: UsageLog[] = (bookingsData || []).map(b => {
         const unit = mappedCars.find(c => c.id === b.unit_id?.toString());
-        const returnDetail = (returnsData || []).find(r => r.booking_id?.toString() === b.id.toString());
         
         const approval = b.status_approval?.toLowerCase() || 'pending';
         const isActive = approval === 'active' || approval === 'on-duty' || approval === 'on duty' || approval === 'on trip';
@@ -113,14 +104,14 @@ export default function App() {
           destination: b.tujuan || b.destination || b.keperluan_tujuan || '',
           status: isActive ? 'active' : (approval as any),
           requestDate: b.created_at,
-          // Add return details - prioritaskan kolom baru
-          endOdometer: b.km_akhir || returnDetail?.odometer_akhir || b.odometer_akhir,
-          endFuel: b.bbm_akhir || returnDetail?.bbm_akhir || b.bbm_akhir,
-          endCondition: b.kondisi_akhir || returnDetail?.kondisi_akhir,
-          arrivalTime: returnDetail?.waktu_kembali,
-          notes: b.catatan_kondisi || returnDetail?.catatan,
-          parkingPhotoUrl: b.foto_parkir || returnDetail?.foto_parkir,
-          speedometerPhotoUrl: b.foto_speedo || returnDetail?.foto_speedo || returnDetail?.foto_odo || returnDetail?.foto_speedometer
+          // Add return details - prioritaskan kolom baru di fleet_bookings
+          endOdometer: b.km_akhir || b.odometer_akhir,
+          endFuel: b.bbm_akhir,
+          endCondition: b.catatan_kondisi?.includes('BAIK') ? 'BAIK' : (b.catatan_kondisi ? 'PERLU PENGECEKAN' : undefined),
+          arrivalTime: b.status_approval === 'completed' ? b.updated_at : undefined,
+          notes: b.catatan_kondisi,
+          parkingPhotoUrl: b.foto_parkir,
+          speedometerPhotoUrl: b.foto_speedo || b.foto_odo || b.foto_speedometer
         };
       });
 
@@ -313,25 +304,6 @@ export default function App() {
 
       if (bookingUpdateErr) console.warn("Update fleet_bookings details failed:", bookingUpdateErr);
 
-      const fullPayload: any = {
-        booking_id: id,
-        odometer_akhir: endData.endOdo,
-        bbm_akhir: endData.endFuel,
-        kondisi_akhir: endData.endCondition,
-        waktu_kembali: endData.arrivalTime || new Date().toISOString(),
-        catatan: `${endData.notes || ''} (BBM: ${endData.endFuel}, Kondisi: ${endData.endCondition})`,
-        foto_parkir: parkingUrl,
-        foto_odo: speedometerUrl,
-        foto_speedo: speedometerUrl // Also set this if the column exists in returns table
-      };
-
-      const { error: returnErr } = await supabase.from('fleet_returns').insert([fullPayload]);
-      
-      if (returnErr) {
-        console.warn("Laporan detail gagal disimpan, tapi status unit tetap di-reset:", returnErr.message);
-        // Kita tidak throw error di sini agar alert sukses tetap muncul karena unit sudah tersedia
-      }
-
       alert("✅ Unit berhasil dikembalikan & armada kini TERSEDIA.");
     } catch (e: any) {
       console.error("Error Total handleComplete:", e);
@@ -477,6 +449,44 @@ export default function App() {
       setIsSyncing(false);
     }
   };
+
+  if (configError && !isReady) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-10 text-white text-center font-sans">
+        <div className="max-w-md space-y-6">
+          <div className="w-20 h-20 bg-amber-500 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-amber-500/20">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+          </div>
+          <h1 className="text-2xl font-black uppercase tracking-tight">Konfigurasi Dibutuhkan</h1>
+          <p className="text-slate-400 text-sm font-bold uppercase tracking-widest leading-loose">
+            {configError}
+          </p>
+          <button onClick={() => window.location.reload()} className="px-10 py-4 bg-fuchsia-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-700 transition-all">
+            Coba Segarkan Halaman
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (networkError && !isReady && logs.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-10 text-white text-center font-sans">
+        <div className="max-w-md space-y-6">
+          <div className="w-20 h-20 bg-red-600 rounded-3xl flex items-center justify-center mx-auto shadow-2xl shadow-red-600/20">
+            <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3"><path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.58 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/></svg>
+          </div>
+          <h1 className="text-2xl font-black uppercase tracking-tight">Koneksi Terputus</h1>
+          <p className="text-slate-400 text-sm font-bold uppercase tracking-widest leading-loose">
+            Gagal menghubungkan ke database armada. Mohon periksa koneksi internet Anda atau pastikan URL Supabase sudah benar.
+          </p>
+          <button onClick={() => syncData()} className="px-10 py-4 bg-fuchsia-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-700 transition-all">
+            Hubungkan Kembali
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <HashRouter>

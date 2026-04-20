@@ -30,18 +30,18 @@ export default function HistoryPage({ logs, onDelete }: Props) {
 
   const exportToExcel = () => {
     const dataToExport = filteredLogs.map(log => ({
-      'Nama Driver': log.driverName,
-      'Unit Armada': log.carName,
-      'Departemen': log.department,
-      'Tujuan': log.destination,
-      'Keperluan': log.purpose,
-      'Waktu Berangkat': new Date(log.departureTime).toLocaleString('id-ID'),
+      'Nama Driver': log.driverName || '-',
+      'Unit Armada': log.carName || '-',
+      'Departemen': log.department || '-',
+      'Tujuan': log.destination || '-',
+      'Keperluan': log.purpose || '-',
+      'Waktu Berangkat': log.departureTime ? new Date(log.departureTime).toLocaleString('id-ID') : '-',
       'Rencana Kembali': log.plannedEndTime ? new Date(log.plannedEndTime).toLocaleString('id-ID') : '-',
-      'KM Awal': log.startOdometer,
+      'KM Awal': log.startOdometer || 0,
       'KM Akhir': log.endOdometer || '-',
       'BBM/Baterai Akhir': log.endFuel || '-',
       'Kondisi Akhir': log.endCondition || '-',
-      'Status': log.status.toUpperCase(),
+      'Status': log.status?.toUpperCase() || '-',
       'Catatan': log.notes || '-',
       'URL Foto Parkir': log.parkingPhotoUrl || '-',
       'URL Foto Odometer': log.speedometerPhotoUrl || '-'
@@ -112,16 +112,16 @@ export default function HistoryPage({ logs, onDelete }: Props) {
                     <p className="text-[9px] text-slate-400 font-bold italic truncate max-w-[150px]">"{log.purpose}"</p>
                   </td>
                   <td className="px-8 py-8 text-center">
-                    <p className="text-xs font-black text-slate-950">{formatDate(log.departureTime)}</p>
-                    <p className="text-[10px] font-bold text-fuchsia-600 mb-2">{formatTime(log.departureTime)} WIB</p>
+                    <p className="text-xs font-black text-slate-950">{log.departureTime ? formatDate(log.departureTime) : '-'}</p>
+                    <p className="text-[10px] font-bold text-fuchsia-600 mb-2">{log.departureTime ? `${formatTime(log.departureTime)} WIB` : '-'}</p>
                     <div className="pt-2 border-t border-slate-100">
-                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Rencana: {formatTime(log.plannedStartTime)} - {formatTime(log.plannedEndTime)}</p>
+                      <p className="text-[8px] font-black text-slate-400 uppercase tracking-tighter">Rencana: {log.plannedStartTime ? formatTime(log.plannedStartTime) : '?'} - {log.plannedEndTime ? formatTime(log.plannedEndTime) : '?'}</p>
                     </div>
                   </td>
                   <td className="px-8 py-8">
                     <div className="flex flex-col gap-1 items-center">
-                      <span className={`text-[8px] font-black px-2 py-0.5 rounded uppercase ${log.carName.toUpperCase().includes('BYD') ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
-                        {log.endFuel ? (log.carName.toUpperCase().includes('BYD') ? `BAT: ${log.endFuel}` : `BBM: ${log.endFuel}`) : 'N/A'}
+                      <span className={`text-[8px] font-black px-2 py-0.5 rounded uppercase ${log.carName?.toUpperCase()?.includes('BYD') ? 'bg-blue-100 text-blue-600' : 'bg-slate-100 text-slate-500'}`}>
+                        {log.endFuel ? (log.carName?.toUpperCase()?.includes('BYD') ? `BAT: ${log.endFuel}` : `BBM: ${log.endFuel}`) : 'N/A'}
                       </span>
                       <span className="font-mono text-[9px] font-black text-slate-400">{log.endOdometer ? `${log.endOdometer} KM` : `${log.startOdometer} KM`}</span>
                     </div>

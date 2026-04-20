@@ -197,8 +197,8 @@ export default function ReturnPage({ logs, onComplete, onExtend }: Props) {
                        <span className="text-[9px] font-mono font-bold text-slate-400">KM Awal: {log.startOdometer}</span>
                     </div>
                   </div>
-                  <h3 className="text-xl font-black text-slate-950 leading-none mb-1">{log.carName}</h3>
-                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">{log.driverName} • {log.department}</p>
+                  <h3 className="text-xl font-black text-slate-950 leading-none mb-1">{log.carName || 'Unit Tanpa Nama'}</h3>
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-6">{log.driverName || '-'} • {log.department || '-'}</p>
                   <button onClick={() => setSelectedLogId(log.id)} className="w-full py-4 bg-slate-950 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest hover:bg-fuchsia-600 transition-all shadow-lg active:scale-95">Selesaikan Trip Sekarang</button>
                 </div>
               ))}
